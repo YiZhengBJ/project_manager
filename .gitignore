@@ -1,0 +1,30 @@
+# Rust compilation and Tauri bundles (including .app/.dmg installers)
+/target/
+/src-tauri/target/
+**/target/
+/src-tauri/gen/
+
+# Frontend build, dependencies, and local tool download cache
+/dist/
+/build/
+/bundle/
+/node_modules/
+/.tools/
+/.cache/
+/coverage/
+
+# Runtime data, secrets, and editor/OS files
+/data/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+__pycache__/
+*.py[cod]
+*.tmp
+
+# Machine-local registry configuration
+/.cargo/config.toml

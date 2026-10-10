@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Project Manager",
+  "version": "1.0.0",
+  "identifier": "local.project-manager.desktop",
+  "build": {
+    "beforeDevCommand": "python3 scripts/frontend.py dev",
+    "beforeBuildCommand": "python3 scripts/frontend.py build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{
+      "label": "main",
+      "title": "项目管理",
+      "width": 1456,
+      "height": 1000,
+      "minWidth": 950,
+      "minHeight": 700,
+      "resizable": true
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "shortDescription": "项目事项脑图与每日 TODO",
+    "category": "Productivity",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "macOS": { "minimumSystemVersion": "12.0" }
+  }
+}

@@ -12,7 +12,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 def build():
     output = ROOT / 'dist'
     output.mkdir(exist_ok=True)
-    for name in ['index.html', 'styles.css', 'app.js', 'desktop.js']:
+    for name in ['index.html', 'styles.css', 'app.js', 'desktop.js', 'excel.js']:
         shutil.copy2(ROOT / 'frontend' / name, output / name)
     print('Frontend built: ' + str(output), flush=True)
 

@@ -22,6 +22,14 @@ window.projectStorage = (() => {
       return operation;
     },
     async flush() { await pending; if (lastError) throw lastError; },
+    async exportExcel(bytes, filename) {
+      if (native) return invoke('export_excel', {bytes: Array.from(bytes), filename});
+      const blob = new Blob([bytes], {type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      const url = URL.createObjectURL(blob), link = document.createElement('a');
+      link.href=url; link.download=filename; document.body.append(link); link.click(); link.remove();
+      setTimeout(()=>URL.revokeObjectURL(url), 30000);
+      return '';
+    },
     async copy(text) {
       if (native) return invoke('copy_text', {text});
       return navigator.clipboard.writeText(text);

@@ -20,6 +20,8 @@ struct Item {
     title: String,
     owner: String,
     #[serde(default)]
+    owners: Vec<String>,
+    #[serde(default)]
     goal: String,
     #[serde(default)]
     risk: String,
@@ -54,11 +56,13 @@ fn validate_project(project: &Project) -> Result<(), String> {
     {
         return Err("负责人列表为空、重复或姓名无效".into());
     }
-    if project
-        .items
-        .iter()
-        .any(|item| !members.contains(item.owner.as_str()))
-    {
+    if project.items.iter().any(|item| {
+        !members.contains(item.owner.as_str())
+            || item
+                .owners
+                .iter()
+                .any(|owner| !members.contains(owner.as_str()))
+    }) {
         return Err("事项负责人不在负责人列表中".into());
     }
     Ok(())
@@ -136,6 +140,13 @@ fn validate(items: &[Item]) -> Result<(), String> {
     }
     let by_id: BTreeMap<&str, &Item> = items.iter().map(|n| (n.id.as_str(), n)).collect();
     for item in items {
+        if !item.owners.is_empty()
+            && (item.owners.first() != Some(&item.owner)
+                || item.owners.iter().any(|name| name.trim().is_empty())
+                || item.owners.iter().collect::<HashSet<_>>().len() != item.owners.len())
+        {
+            return Err("事项负责人为空、重复或主负责人不一致".into());
+        }
         if item.title.trim().is_empty() || item.owner.trim().is_empty() || item.progress > 100 {
             return Err("事项名称、负责人或完成度无效".into());
         }
@@ -179,8 +190,10 @@ fn read_project(path: &Path) -> Result<Option<Project>, String> {
                 .map(|s| s.to_string())
                 .collect();
             for item in &items {
-                if !members.contains(&item.owner) {
-                    members.push(item.owner.clone());
+                for owner in std::iter::once(&item.owner).chain(item.owners.iter()) {
+                    if !members.contains(owner) {
+                        members.push(owner.clone());
+                    }
                 }
             }
             Project { items, members }
@@ -230,6 +243,52 @@ fn copy_text(text: String, app: tauri::AppHandle) -> Result<(), String> {
     app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn export_excel(bytes: Vec<u8>, filename: String, app: tauri::AppHandle) -> Result<String, String> {
+    let folder = app
+        .path()
+        .download_dir()
+        .map_err(|e| e.to_string())?
+        .join("Project Manager");
+    write_excel(&folder, &filename, &bytes).map(|path| path.to_string_lossy().to_string())
+}
+fn write_excel(folder: &Path, filename: &str, bytes: &[u8]) -> Result<PathBuf, String> {
+    if !filename.ends_with(".xlsx")
+        || filename.contains(['/', '\\'])
+        || filename.starts_with('.')
+        || bytes.len() > 100_000_000
+        || !bytes.starts_with(b"PK\x03\x04")
+    {
+        return Err("Excel 文件名或内容无效".into());
+    }
+    fs::create_dir_all(folder).map_err(|e| e.to_string())?;
+    use std::io::Write;
+    for index in 0..1000 {
+        let name = if index == 0 {
+            filename.to_string()
+        } else {
+            format!("{}-{}.xlsx", filename.trim_end_matches(".xlsx"), index)
+        };
+        let path = folder.join(name);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+                    let _ = fs::remove_file(&path);
+                    return Err(error.to_string());
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("导出文件重名过多".into())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -243,7 +302,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             load_project,
             save_project,
-            copy_text
+            copy_text,
+            export_excel
         ])
         .run(tauri::generate_context!())
         .expect("无法启动项目管理应用");
@@ -285,6 +345,47 @@ mod tests {
             "完成设计\n明确验收标准"
         );
         assert_eq!(loaded.projects[0].project.items[0].risk, "需求变动");
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn multiple_owners_validate_and_persist() {
+        let folder = std::env::temp_dir().join(format!(
+            "project-manager-owners-test-{}",
+            std::process::id()
+        ));
+        let path = folder.join("project.json");
+        let mut project = Project {
+            items: sample(),
+            members: vec!["郑一".into(), "林晓".into()],
+        };
+        assert!(project.items[1].owners.is_empty());
+        project.items[1].owners = vec!["林晓".into(), "郑一".into()];
+        write_project(&path, &project).unwrap();
+        assert_eq!(
+            read_project(&path).unwrap().unwrap().items[1].owners.len(),
+            2
+        );
+        project.items[1].owners.push("郑一".into());
+        assert!(validate_project(&project).is_err());
+        project.items[1].owners = vec!["林晓".into(), "未知".into()];
+        assert!(validate_project(&project).is_err());
+        project.items[1].owners = vec!["郑一".into()];
+        assert!(validate_project(&project).is_err());
+        project.items[1].owner = "郑一".into();
+        assert!(validate_project(&project).is_ok());
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn excel_export_avoids_overwriting_and_rejects_paths() {
+        let folder =
+            std::env::temp_dir().join(format!("project-manager-excel-test-{}", std::process::id()));
+        let bytes = b"PK\x03\x04xlsx-test";
+        let first = write_excel(&folder, "任务.xlsx", bytes).unwrap();
+        let second = write_excel(&folder, "任务.xlsx", bytes).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(fs::read(first).unwrap(), bytes);
+        assert!(write_excel(&folder, "../任务.xlsx", bytes).is_err());
+        assert!(write_excel(&folder, "任务.xlsx", b"not-xlsx").is_err());
         fs::remove_dir_all(folder).unwrap();
     }
     #[test]

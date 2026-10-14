@@ -12,6 +12,12 @@ struct DailyRecord {
     note: String,
     #[serde(default)]
     done: bool,
+    #[serde(
+        default,
+        rename = "deferredTo",
+        skip_serializing_if = "Option::is_none"
+    )]
+    deferred_to: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -386,6 +392,32 @@ mod tests {
         assert_eq!(fs::read(first).unwrap(), bytes);
         assert!(write_excel(&folder, "../任务.xlsx", bytes).is_err());
         assert!(write_excel(&folder, "任务.xlsx", b"not-xlsx").is_err());
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn deferred_record_round_trip_and_legacy_compatibility() {
+        let old: DailyRecord =
+            serde_json::from_value(serde_json::json!({"todo":"昨日计划", "note":"", "done":false}))
+                .unwrap();
+        assert!(old.deferred_to.is_none());
+        let folder =
+            std::env::temp_dir().join(format!("project-manager-defer-test-{}", std::process::id()));
+        let path = folder.join("project.json");
+        let mut project = Project {
+            items: sample(),
+            members: vec!["郑一".into(), "林晓".into()],
+        };
+        let mut deferred = old.clone();
+        deferred.deferred_to = Some("2026-10-14".into());
+        project.items[1].logs.insert("2026-10-13".into(), deferred);
+        project.items[1].logs.insert("2026-10-14".into(), old);
+        write_project(&path, &project).unwrap();
+        let loaded = read_project(&path).unwrap().unwrap();
+        assert_eq!(
+            loaded.items[1].logs["2026-10-13"].deferred_to.as_deref(),
+            Some("2026-10-14")
+        );
+        assert!(loaded.items[1].logs["2026-10-14"].deferred_to.is_none());
         fs::remove_dir_all(folder).unwrap();
     }
     #[test]

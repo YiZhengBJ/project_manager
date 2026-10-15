@@ -1,6 +1,6 @@
 async function initializeApp(){
 
-let people=['郑一','林晓','陈默','苏宁']; const colors=['','blue','orange','purple']; const initialDate=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+let people=['郑一','林晓','陈默','苏宁']; const colors=['','blue','orange','purple']; const systemDateFormatter=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'});const currentSystemDate=()=>systemDateFormatter.format(new Date());const initialDate=currentSystemDate();
 const seed=[
 {id:'root',title:'示例项目',owner:'郑一',progress:58,parent:null},
 {id:'product',title:'产品与设计',owner:'林晓',progress:85,parent:'root'},
@@ -29,6 +29,7 @@ const exampleRoot=nodes.find(n=>!n.parent);if(exampleRoot&&exampleRoot.title==='
 let selected=null,view='map',date=initialDate,zoom=1,collapsed=new Set();
 let panX=0,panY=0,viewportReady=false,drag=null,suppressClick=false;
 let wheelFrame=0,wheelTarget=null,wheelTime=0,wheelPointer=null,wheelDirection=0;
+let lastSystemDate=initialDate,dayRefreshTimer=0;
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const children=id=>nodes.filter(n=>n.parent===id);
 const avatar=name=>`<span class="avatar ${colors[people.indexOf(name)]||''}">${esc(name.slice(0,1))}</span>`;
@@ -150,6 +151,10 @@ function renderPeople(){const remaining=people.length>1;$('#people-members').inn
 function openPeople(){renderPeople();$('#people-dialog').showModal();$('#person-name').focus()}
 $('#manage-people').onclick=openPeople;$('#people-close').onclick=()=>$('#people-dialog').close();$('#add-person-form').onsubmit=e=>{e.preventDefault();const input=$('#person-name'),name=input.value.trim();if(!name||people.includes(name)||name==='__manage__'){input.setCustomValidity(!name?'请输入姓名':people.includes(name)?'该负责人已存在':'请使用其他姓名');input.reportValidity();return}people.push(name);input.value='';save();render();renderPeople();toast('负责人已新增')};$('#person-name').oninput=e=>e.target.setCustomValidity('');
 $('#day').value=date;$('#day').onchange=e=>{if(e.target.value){date=e.target.value;render()}};$('#person-filter').onchange=onPersonFilter;$('#hide-done').onchange=render;document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));$('#copy-all').onclick=()=>copyText($('#report').value);$('#new-node').onclick=()=>addNode(selected||'root');$('#zoom-in').onclick=()=>zoomAt(zoom*1.2);$('#zoom-out').onclick=()=>zoomAt(zoom/1.2);$('#center-map').onclick=()=>{selected=null;renderMap();renderDetail();fitMap()};
+function millisecondsUntilNextDay(){const now=Date.now(),chinaTime=new Date(now+8*60*60*1000);return Date.UTC(chinaTime.getUTCFullYear(),chinaTime.getUTCMonth(),chinaTime.getUTCDate()+1)-8*60*60*1000-now+250}
+function checkSystemDay(){const next=currentSystemDate();if(next===lastSystemDate)return;const previous=lastSystemDate;lastSystemDate=next;if(date!==previous)return;const focused=document.activeElement;if(focused?.matches('[contenteditable]'))focused.blur();date=next;$('#day').value=date;render();toast('日期已自动更新为 '+date)}
+function scheduleDayRefresh(){clearTimeout(dayRefreshTimer);dayRefreshTimer=setTimeout(()=>{checkSystemDay();scheduleDayRefresh()},Math.max(1000,millisecondsUntilNextDay()))}
+window.addEventListener('focus',checkSystemDay);document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkSystemDay()});
 function applyViewport(){const map=$('#map');if(metricsZoom!==zoom&&map.querySelector('.node')){layoutMap();return}map.style.transform='none';map.style.zoom=zoom;map.style.left=(panX/zoom)+'px';map.style.top=(panY/zoom)+'px';$('#zoom-label').textContent=Math.round(zoom*100)+'%'}
 function fitMap(){stopWheelZoom();const canvas=$('.canvas');if(!canvas.clientWidth||!canvas.clientHeight)return;const cards=[...$('#map').querySelectorAll('.node')];if(!cards.length)return;function bounds(){return {left:Math.min(...cards.map(n=>n.offsetLeft))-14,top:Math.min(...cards.map(n=>n.offsetTop))-10,right:Math.max(...cards.map(n=>n.offsetLeft+n.offsetWidth+(n.querySelector('.node-toggle')?6+n.querySelector('.node-toggle').offsetWidth:0)))+14,bottom:Math.max(...cards.map(n=>n.offsetTop+n.offsetHeight))+10}}zoom=1;const padding=28;for(let i=0;i<28;i++){layoutMap();const b=bounds();const next=Math.max(.08,Math.min(1,(canvas.clientWidth-padding*2)/(b.right-b.left),(canvas.clientHeight-padding*2)/(b.bottom-b.top)));if(Math.abs(next-zoom)<.001){zoom=next;break}zoom=next}layoutMap();const b=bounds();panX=(canvas.clientWidth-(b.right-b.left)*zoom)/2-b.left*zoom;panY=(canvas.clientHeight-(b.bottom-b.top)*zoom)/2-b.top*zoom;viewportReady=true;applyViewport()}
 function zoomAt(next,x,y,fromWheel=false){if(!fromWheel)stopWheelZoom();const canvas=$('.canvas');x=x??canvas.clientWidth/2;y=y??canvas.clientHeight/2;next=Math.max(.08,Math.min(3,next));const ratio=next/zoom;panX=x-(x-panX)*ratio;panY=y-(y-panY)*ratio;zoom=next;applyViewport()}
@@ -173,6 +178,7 @@ let lastCanvasWidth=canvas.clientWidth,lastCanvasHeight=canvas.clientHeight;
 new ResizeObserver(()=>{const width=canvas.clientWidth,height=canvas.clientHeight;if(!width||!height)return;if(viewportReady&&lastCanvasWidth&&lastCanvasHeight){panX+=(width-lastCanvasWidth)/2;panY+=(height-lastCanvasHeight)/2;applyViewport()}lastCanvasWidth=width;lastCanvasHeight=height}).observe(canvas);
 $('#person-filter').onchange=onPersonFilter;$('#hide-done').onchange=render;
 render();
+scheduleDayRefresh();
 
 await setupCloseHandler();
 await window.projectStorage.save(projectDocument());

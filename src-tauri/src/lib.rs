@@ -74,10 +74,20 @@ fn validate_project(project: &Project) -> Result<(), String> {
     Ok(())
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectCommit {
+    id: String,
+    message: String,
+    created_at: String,
+    snapshot: Project,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct WorkspaceProject {
     id: String,
     #[serde(flatten)]
     project: Project,
+    #[serde(default)]
+    commits: Vec<ProjectCommit>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -99,6 +109,18 @@ fn validate_workspace(workspace: &Workspace) -> Result<(), String> {
     }
     for p in &workspace.projects {
         validate_project(&p.project)?;
+        let mut ids = HashSet::new();
+        for commit in &p.commits {
+            if commit.id.trim().is_empty()
+                || !ids.insert(&commit.id)
+                || commit.message.trim().is_empty()
+                || commit.message.chars().count() > 2000
+                || commit.created_at.trim().is_empty()
+            {
+                return Err("Commit 的 ID、message 或时间无效".into());
+            }
+            validate_project(&commit.snapshot)?;
+        }
     }
     Ok(())
 }
@@ -115,6 +137,7 @@ fn read_workspace(path: &Path) -> Result<Option<Workspace>, String> {
         Workspace {
             projects: vec![WorkspaceProject {
                 id: "default".into(),
+                commits: vec![],
                 project: read_project(path)?.ok_or("项目文件为空")?,
             }],
             active_project_id: "default".into(),
@@ -334,6 +357,7 @@ mod tests {
         let document = Workspace {
             projects: vec![WorkspaceProject {
                 id: "example".into(),
+                commits: vec![],
                 project: Project {
                     items,
                     members: vec!["郑一".into(), "林晓".into()],
@@ -351,6 +375,39 @@ mod tests {
             "完成设计\n明确验收标准"
         );
         assert_eq!(loaded.projects[0].project.items[0].risk, "需求变动");
+        fs::remove_dir_all(folder).unwrap();
+    }
+    #[test]
+    fn commits_are_optional_and_persist_independent_snapshots() {
+        let project = Project {
+            items: sample(),
+            members: vec!["郑一".into(), "林晓".into()],
+        };
+        let legacy = serde_json::json!({"projects":[{"id":"p", "items":project.items,"members":project.members}],"activeProjectId":"p"});
+        let mut workspace: Workspace = serde_json::from_value(legacy).unwrap();
+        assert!(workspace.projects[0].commits.is_empty());
+        let snapshot = workspace.projects[0].project.clone();
+        workspace.projects[0].commits.push(ProjectCommit {
+            id: "commit-1".into(),
+            message: "保存里程碑".into(),
+            created_at: "2026-11-02T02:00:00Z".into(),
+            snapshot,
+        });
+        workspace.projects[0].project.items[0].title = "之后修改的标题".into();
+        let folder = std::env::temp_dir().join(format!(
+            "project-manager-commit-test-{}",
+            std::process::id()
+        ));
+        let path = folder.join("project.json");
+        write_workspace(&path, &workspace).unwrap();
+        let loaded = read_workspace(&path).unwrap().unwrap();
+        assert_eq!(loaded.projects[0].commits[0].message, "保存里程碑");
+        assert_ne!(
+            loaded.projects[0].commits[0].snapshot.items[0].title,
+            loaded.projects[0].project.items[0].title
+        );
+        workspace.projects[0].commits[0].message = "  ".into();
+        assert!(validate_workspace(&workspace).is_err());
         fs::remove_dir_all(folder).unwrap();
     }
     #[test]
@@ -507,6 +564,7 @@ mod tests {
         assert_eq!(workspace.projects.len(), 1);
         workspace.projects.push(WorkspaceProject {
             id: "second".into(),
+            commits: vec![],
             project,
         });
         workspace.active_project_id = "second".into();
